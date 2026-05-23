@@ -243,6 +243,15 @@ class TAWindowPanel(QWidget):
         # camera_busy → chopper widget: disable writes during scan/monitor
         self.camera_busy.connect(self._chopper_widget.set_busy)
 
+        # Re-bind the chopper widget once HardwareManager finishes its
+        # background init (panel is built before chopper_pair exists).
+        from andor_qt.core.signals import get_hardware_signals
+        get_hardware_signals().choppers_initialized.connect(self._on_choppers_initialized)
+        # In case init already completed before this connection was made,
+        # do an opportunistic bind now.
+        if getattr(self._hw_manager, "chopper_pair", None) is not None:
+            self._chopper_widget.set_pair(self._hw_manager.chopper_pair)
+
         # Engine → status / button state
         self._engine.scan_started.connect(self._on_scan_started)
         self._engine.point_started.connect(lambda _si, _d: self._live_display.reset_phase_stats())
@@ -584,6 +593,19 @@ class TAWindowPanel(QWidget):
         log.error(f"TA engine error: {message}")
         self._status_label.setText(f"Error: {message}")
         self._end_scan()
+
+    @Slot(dict)
+    def _on_choppers_initialized(self, info: dict) -> None:
+        """Re-bind the chopper widget once HardwareManager finishes init."""
+        pair = getattr(self._hw_manager, "chopper_pair", None)
+        self._chopper_widget.set_pair(pair)
+        if pair is not None:
+            self._chopper_widget.refresh()
+        log.info(
+            "Chopper widget re-bound (pump=%s connected=%s, probe=%s connected=%s)",
+            info.get("pump_port", ""), info.get("pump_connected", False),
+            info.get("probe_port", ""), info.get("probe_connected", False),
+        )
 
     @Slot(str)
     def _on_engine_user_prompt(self, msg: str) -> None:

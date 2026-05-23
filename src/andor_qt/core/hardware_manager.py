@@ -305,6 +305,10 @@ class HardwareManager:
         if chopper_cfg is not None and not getattr(chopper_cfg, "enabled", True):
             log.info("Chopper pair disabled via config")
             self._chopper_pair = None
+            self._signals.choppers_initialized.emit(
+                {"pump_port": "", "probe_port": "",
+                 "pump_connected": False, "probe_connected": False}
+            )
             return
 
         from andor_pymeasure.instruments.thorlabs_mc2000b import (
@@ -322,6 +326,10 @@ class HardwareManager:
             self._chopper_pair = ChopperPair(pump=pump, probe=probe)
             log.info("Mock chopper pair created (pump=%s, probe=%s)",
                      pump_port, probe_port or "<none>")
+            self._signals.choppers_initialized.emit(
+                {"pump_port": pump_port, "probe_port": probe_port or "",
+                 "pump_connected": True, "probe_connected": probe is not None}
+            )
             return
 
         pump = None
@@ -342,8 +350,13 @@ class HardwareManager:
                 probe = None
         if pump is None and probe is None:
             self._chopper_pair = None
-            return
-        self._chopper_pair = ChopperPair(pump=pump, probe=probe)
+        else:
+            self._chopper_pair = ChopperPair(pump=pump, probe=probe)
+        self._signals.choppers_initialized.emit(
+            {"pump_port": pump_port, "probe_port": probe_port,
+             "pump_connected": pump is not None,
+             "probe_connected": probe is not None}
+        )
 
     def inject_into_procedure(self, procedure_class: Type["Procedure"]) -> None:
         """Inject shared hardware references into a procedure class.

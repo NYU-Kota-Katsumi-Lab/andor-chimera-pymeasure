@@ -118,6 +118,37 @@ class TestTAWindowPanel:
         assert panel.chopper_widget.setup_button.isEnabled() is True
         panel.deleteLater()
 
+    def test_chopper_widget_rebinds_after_late_init(self, qt_app, mock_hw_manager):
+        """Panel built before chopper_pair exists; widget rebinds on signal."""
+        from andor_pymeasure.instruments.thorlabs_mc2000b import (
+            ChopperPair,
+            MockMC2000B,
+        )
+        from andor_qt.core.signals import get_hardware_signals
+        from andor_qt.windows.ta_panel import TAWindowPanel
+
+        # Construct the panel BEFORE the hardware manager has a chopper_pair.
+        mock_hw_manager.chopper_pair = None
+        panel = TAWindowPanel(hw_manager=mock_hw_manager)
+        assert panel.chopper_widget.setup_button.isEnabled() is False
+
+        # Now simulate the hardware-manager finishing chopper init:
+        mock_hw_manager.chopper_pair = ChopperPair(
+            pump=MockMC2000B(port="COM_LATE_PUMP"),
+            probe=MockMC2000B(port="COM_LATE_PROBE"),
+        )
+        get_hardware_signals().choppers_initialized.emit(
+            {"pump_port": "COM_LATE_PUMP", "probe_port": "COM_LATE_PROBE",
+             "pump_connected": True, "probe_connected": True}
+        )
+        qt_app.processEvents()
+
+        # Widget should now be live and bound to the new pair.
+        assert panel.chopper_widget.setup_button.isEnabled() is True
+        assert "COM_LATE_PUMP" in panel.chopper_widget.pump_panel._port_label.text()
+        assert "COM_LATE_PROBE" in panel.chopper_widget.probe_panel._port_label.text()
+        panel.deleteLater()
+
 
 class TestChopper2x2Panel:
     """TAWindowPanel creates mock NI DAQ objects for chopper_2x2 mode."""
