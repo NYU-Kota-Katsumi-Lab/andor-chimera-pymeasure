@@ -444,6 +444,26 @@ Chopper REF OUT (INNER, 250 Hz) → P0.0 (User 2 BNC) — phase tags
 - **REF OUT:** INNER — tracks the actual blade position of inner slots
 - **P0.0 = HIGH when blade is open** (beam passes through)
 
+#### Chopper GUI Control (added 2026-05-23)
+
+`andor_pymeasure.instruments.thorlabs_mc2000b` provides `MC2000B` (raw
+serial) and `MockMC2000B` driver classes plus a `ChopperPair` helper that
+wraps the pump-master / probe-slave pair. The pair is owned by
+`HardwareManager.chopper_pair` and configured via `AppConfig.choppers`
+(default pump=COM4, probe=COM3, blade=MC1F10HP, 250 Hz). `ChopperPair.shutdown()`
+disables both choppers and closes their serial ports during shutdown.
+
+`andor_qt.widgets.hardware.chopper_control.ChopperControlWidget` exposes
+enable / phase / actual-frequency per chopper plus a "Setup pair" button
+that applies the canonical configuration documented in
+`project_chopper_working_config` memory. The widget is wired into
+`TAWindowPanel` below the Scan/Monitor tabs; `camera_busy` from the TA
+panel disables writes during a scan or monitor while keeping the
+read-only Refresh button enabled.
+
+Phase spinbox commits on Enter / focus-out / "Apply" click rather than
+per-tick, so spinner clicks don't spam the serial line.
+
 #### Camera Readout — Critical Lessons Learned
 
 **Overlap mode is REQUIRED for 500 Hz with fast_external trigger.** Without overlap, the camera can only sustain ~260 Hz (exposure + readout > 2 ms frame period). With overlap enabled, readout happens during the next exposure, allowing 500 Hz. The camera may fire in bursts (not every trigger), but the frames that do fire are properly timed:
@@ -694,10 +714,14 @@ tests/
 │   └── test_scan_config.py            # Delay generators, unit conversions
 ├── qt/
 │   ├── conftest.py      # Qt fixtures (qt_app, hardware_manager, wait_for)
-│   ├── test_ta_integration.py         # TA panel wiring, hbin wavelength alignment
+│   ├── test_ta_integration.py         # TA panel wiring, hbin wavelength alignment, chopper widget
+│   ├── test_hardware_manager.py       # Singleton, init/shutdown, chopper_pair lifecycle
 │   └── widgets/
 │       ├── test_camera_settings_widget.py  # Camera UI, QSettings persistence
+│       ├── test_chopper_control_widget.py  # MC2000B pair widget: refresh, setup, busy state
 │       └── test_ta_live_display.py         # Display, hover, click-to-select, readout
+├── instruments/
+│   └── test_thorlabs_mc2000b.py       # Chopper driver (Mock + serial FakeSerial)
 ├── integration/         # Hardware tests (--hardware flag)
 ├── procedures/          # Procedure tests
 └── e2e/                 # End-to-end workflow tests
