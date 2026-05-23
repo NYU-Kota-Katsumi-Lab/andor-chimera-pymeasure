@@ -69,6 +69,55 @@ class TestTAWindowPanel:
         panel.engine.abort()
         panel.deleteLater()
 
+    def test_has_chopper_widget_when_manager_has_pair(self, qt_app, mock_hw_manager):
+        """TAWindowPanel exposes a ChopperControlWidget bound to hw.chopper_pair."""
+        from andor_pymeasure.instruments.thorlabs_mc2000b import (
+            ChopperPair,
+            MockMC2000B,
+        )
+        from andor_qt.widgets.hardware.chopper_control import ChopperControlWidget
+        from andor_qt.windows.ta_panel import TAWindowPanel
+
+        mock_hw_manager.chopper_pair = ChopperPair(
+            pump=MockMC2000B(port="COM_TEST_PUMP"),
+            probe=MockMC2000B(port="COM_TEST_PROBE"),
+        )
+        panel = TAWindowPanel(hw_manager=mock_hw_manager)
+        assert isinstance(panel.chopper_widget, ChopperControlWidget)
+        assert panel.chopper_widget.setup_button.isEnabled() is True
+        panel.deleteLater()
+
+    def test_chopper_widget_disabled_when_no_pair(self, qt_app, mock_hw_manager):
+        """When HardwareManager has no chopper_pair, widget is constructed but disabled."""
+        from andor_qt.windows.ta_panel import TAWindowPanel
+
+        mock_hw_manager.chopper_pair = None
+        panel = TAWindowPanel(hw_manager=mock_hw_manager)
+        assert panel.chopper_widget.setup_button.isEnabled() is False
+        panel.deleteLater()
+
+    def test_camera_busy_disables_chopper_writes(self, qt_app, mock_hw_manager):
+        """Emitting camera_busy(True) should disable the chopper widget's writes."""
+        from andor_pymeasure.instruments.thorlabs_mc2000b import (
+            ChopperPair,
+            MockMC2000B,
+        )
+        from andor_qt.windows.ta_panel import TAWindowPanel
+
+        mock_hw_manager.chopper_pair = ChopperPair(
+            pump=MockMC2000B(port="COM_TEST_PUMP"),
+            probe=MockMC2000B(port="COM_TEST_PROBE"),
+        )
+        panel = TAWindowPanel(hw_manager=mock_hw_manager)
+        assert panel.chopper_widget.setup_button.isEnabled() is True
+
+        panel.camera_busy.emit(True)
+        assert panel.chopper_widget.setup_button.isEnabled() is False
+
+        panel.camera_busy.emit(False)
+        assert panel.chopper_widget.setup_button.isEnabled() is True
+        panel.deleteLater()
+
 
 class TestChopper2x2Panel:
     """TAWindowPanel creates mock NI DAQ objects for chopper_2x2 mode."""
