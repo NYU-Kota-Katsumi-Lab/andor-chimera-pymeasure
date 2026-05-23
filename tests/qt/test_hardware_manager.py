@@ -436,3 +436,98 @@ class TestHardwareManagerEventBus:
         wait_for(lambda: len(shutdown_done) > 0)
 
         handler.assert_called_once()
+
+
+class TestHardwareManagerChopperPair:
+    """Tests for HardwareManager chopper-pair integration."""
+
+    def test_chopper_pair_none_before_init(self, hardware_manager):
+        """chopper_pair is None before initialization."""
+        assert hardware_manager.chopper_pair is None
+
+    def test_initialize_creates_mock_chopper_pair(self, hardware_manager, wait_for):
+        """Initialize creates a ChopperPair with mock choppers in mock mode."""
+        from andor_pymeasure.instruments.thorlabs_mc2000b import MockMC2000B
+
+        completed = []
+        hardware_manager.initialize(on_complete=lambda: completed.append(True))
+        wait_for(lambda: len(completed) > 0)
+
+        pair = hardware_manager.chopper_pair
+        assert pair is not None
+        assert isinstance(pair.pump, MockMC2000B)
+        assert isinstance(pair.probe, MockMC2000B)
+
+    def test_chopper_ports_from_config(self, hardware_manager, wait_for):
+        """Chopper ports come from AppConfig.choppers."""
+        from andor_qt.core.config import (
+            AppConfig,
+            ChopperConfig,
+            HardwareConfig,
+        )
+
+        cfg = AppConfig(
+            hardware=HardwareConfig(mock_mode=True),
+            motion_controllers={
+                "enabled": True,
+                "controllers": [{"name": "mock", "type": "mock", "axes": []}],
+            },
+            choppers=ChopperConfig(pump_port="COM_TEST_PUMP", probe_port="COM_TEST_PROBE"),
+        )
+        hardware_manager.set_config(cfg)
+
+        completed = []
+        hardware_manager.initialize(on_complete=lambda: completed.append(True))
+        wait_for(lambda: len(completed) > 0)
+
+        pair = hardware_manager.chopper_pair
+        assert pair is not None
+        assert pair.pump.port == "COM_TEST_PUMP"
+        assert pair.probe.port == "COM_TEST_PROBE"
+
+    def test_chopper_disabled_in_config_means_none(self, hardware_manager, wait_for):
+        """If ChopperConfig.enabled is False, chopper_pair stays None."""
+        from andor_qt.core.config import (
+            AppConfig,
+            ChopperConfig,
+            HardwareConfig,
+        )
+
+        cfg = AppConfig(
+            hardware=HardwareConfig(mock_mode=True),
+            motion_controllers={
+                "enabled": True,
+                "controllers": [{"name": "mock", "type": "mock", "axes": []}],
+            },
+            choppers=ChopperConfig(enabled=False),
+        )
+        hardware_manager.set_config(cfg)
+
+        completed = []
+        hardware_manager.initialize(on_complete=lambda: completed.append(True))
+        wait_for(lambda: len(completed) > 0)
+
+        assert hardware_manager.chopper_pair is None
+
+    def test_shutdown_disables_choppers(self, hardware_manager, wait_for):
+        """Shutdown calls .shutdown() on the chopper pair (choppers disabled)."""
+        completed = []
+        hardware_manager.initialize(on_complete=lambda: completed.append(True))
+        wait_for(lambda: len(completed) > 0)
+
+        pair = hardware_manager.chopper_pair
+        assert pair is not None
+        # Force enabled so we can confirm shutdown disables them
+        pair.pump.enabled = True
+        pair.probe.enabled = True
+
+        shutdown_done = []
+        hardware_manager.shutdown(
+            warmup=False, on_complete=lambda: shutdown_done.append(True)
+        )
+        wait_for(lambda: len(shutdown_done) > 0)
+
+        # After shutdown the manager clears its reference; we already captured pair
+        assert pair.pump.enabled is False
+        assert pair.probe.enabled is False
+        assert hardware_manager.chopper_pair is None

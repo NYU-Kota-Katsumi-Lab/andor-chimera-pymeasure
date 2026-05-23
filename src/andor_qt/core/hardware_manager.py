@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from andor_pymeasure.instruments.andor_camera import AndorCamera
     from andor_pymeasure.instruments.andor_spectrograph import AndorSpectrograph
+    from andor_pymeasure.instruments.thorlabs_mc2000b import ChopperPair
     from pymeasure.experiment import Procedure
 
     from andor_qt.core.config import AppConfig
@@ -72,6 +73,7 @@ class HardwareManager:
         self._camera: Optional["AndorCamera"] = None
         self._spectrograph: Optional["AndorSpectrograph"] = None
         self._motion_manager: Optional["MotionControllerManager"] = None
+        self._chopper_pair: Optional["ChopperPair"] = None
         self._mock_mode = os.environ.get("ANDOR_MOCK", "0") == "1"
         self._signals = get_hardware_signals()
         self._temp_timer: Optional[QTimer] = None
@@ -100,6 +102,11 @@ class HardwareManager:
     def motion_manager(self) -> Optional["MotionControllerManager"]:
         """Get the motion controller manager."""
         return self._motion_manager
+
+    @property
+    def chopper_pair(self) -> Optional["ChopperPair"]:
+        """Get the MC2000B chopper pair (pump master + probe slave)."""
+        return self._chopper_pair
 
     @property
     def is_initialized(self) -> bool:
@@ -218,6 +225,9 @@ class HardwareManager:
         # Initialize motion controllers
         self._init_motion_controllers()
 
+        # Initialize chopper pair (mock objects, never opens a serial port)
+        self._init_chopper_pair()
+
     def _init_real_hardware(self, sdk_path: str) -> None:
         """Initialize real hardware."""
         from andor_pymeasure.instruments.andor_camera import AndorCamera
@@ -231,6 +241,10 @@ class HardwareManager:
 
         # Initialize motion controllers
         self._init_motion_controllers()
+
+        # Initialize chopper pair (best-effort: a missing port is logged but
+        # does not abort hardware init)
+        self._init_chopper_pair()
 
     def _init_motion_controllers(self) -> None:
         """Initialize motion controllers from config."""
@@ -278,6 +292,58 @@ class HardwareManager:
             }
             self._signals.motion_initialized.emit(axis_info)
             log.info(f"Motion controllers initialized: {list(axis_info.keys())}")
+
+    def _init_chopper_pair(self) -> None:
+        """Initialize the MC2000B chopper pair (pump master + probe slave).
+
+        In mock mode, two ``MockMC2000B`` objects are created with no IO. In
+        hardware mode, each port is opened in a try block — a failure on
+        either port logs a warning and that slot stays None, but does NOT
+        abort hardware init.
+        """
+        chopper_cfg = getattr(self._config, "choppers", None) if self._config else None
+        if chopper_cfg is not None and not getattr(chopper_cfg, "enabled", True):
+            log.info("Chopper pair disabled via config")
+            self._chopper_pair = None
+            return
+
+        from andor_pymeasure.instruments.thorlabs_mc2000b import (
+            ChopperPair,
+            MC2000B,
+            MockMC2000B,
+        )
+
+        pump_port = getattr(chopper_cfg, "pump_port", "COM4") if chopper_cfg else "COM4"
+        probe_port = getattr(chopper_cfg, "probe_port", "COM3") if chopper_cfg else "COM3"
+
+        if self._mock_mode:
+            pump = MockMC2000B(port=pump_port)
+            probe = MockMC2000B(port=probe_port) if probe_port else None
+            self._chopper_pair = ChopperPair(pump=pump, probe=probe)
+            log.info("Mock chopper pair created (pump=%s, probe=%s)",
+                     pump_port, probe_port or "<none>")
+            return
+
+        pump = None
+        probe = None
+        if pump_port:
+            try:
+                pump = MC2000B(pump_port)
+                log.info("Pump chopper opened on %s: %s", pump_port, pump.id)
+            except Exception as e:
+                log.warning("Could not open pump chopper on %s: %s", pump_port, e)
+                pump = None
+        if probe_port:
+            try:
+                probe = MC2000B(probe_port)
+                log.info("Probe chopper opened on %s: %s", probe_port, probe.id)
+            except Exception as e:
+                log.warning("Could not open probe chopper on %s: %s", probe_port, e)
+                probe = None
+        if pump is None and probe is None:
+            self._chopper_pair = None
+            return
+        self._chopper_pair = ChopperPair(pump=pump, probe=probe)
 
     def inject_into_procedure(self, procedure_class: Type["Procedure"]) -> None:
         """Inject shared hardware references into a procedure class.
@@ -597,9 +663,19 @@ class HardwareManager:
                         on_progress("Shutting down motion controllers...")
                     self._motion_manager.shutdown()
 
+                # Shutdown chopper pair (disables and closes serial ports)
+                if self._chopper_pair:
+                    if on_progress:
+                        on_progress("Disabling choppers...")
+                    try:
+                        self._chopper_pair.shutdown()
+                    except Exception as e:
+                        log.warning("Chopper shutdown raised: %s", e)
+
                 self._camera = None
                 self._spectrograph = None
                 self._motion_manager = None
+                self._chopper_pair = None
                 self._shutdown_in_progress = False
 
                 # Publish to EventBus
@@ -625,5 +701,6 @@ class HardwareManager:
                 cls._instance._camera = None
                 cls._instance._spectrograph = None
                 cls._instance._motion_manager = None
+                cls._instance._chopper_pair = None
                 cls._instance._initialized = False
             cls._instance = None

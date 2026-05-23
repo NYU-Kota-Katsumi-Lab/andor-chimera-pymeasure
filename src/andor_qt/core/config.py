@@ -18,6 +18,27 @@ log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class ChopperConfig:
+    """Configuration for the Thorlabs MC2000B chopper pair.
+
+    Attributes:
+        enabled: Whether to attempt opening the chopper serial ports during
+            hardware init. If False, ``HardwareManager.chopper_pair`` is None.
+        pump_port: COM port for the pump-master chopper (default ``COM4``).
+        probe_port: COM port for the probe-slave chopper (default ``COM3``).
+            If empty, only the pump chopper is opened.
+        blade: Blade name for both choppers (default ``MC1F10HP``).
+        frequency_hz: Target pump frequency in Hz (default 250).
+    """
+
+    enabled: bool = True
+    pump_port: str = "COM4"
+    probe_port: str = "COM3"
+    blade: str = "MC1F10HP"
+    frequency_hz: int = 250
+
+
+@dataclass(frozen=True)
 class HardwareConfig:
     """Configuration for hardware devices.
 
@@ -80,6 +101,7 @@ class AppConfig:
     ui: UIConfig = field(default_factory=UIConfig)
     calibration: CalibrationConfig = field(default_factory=CalibrationConfig)
     motion_controllers: Optional[dict] = field(default=None)
+    choppers: ChopperConfig = field(default_factory=ChopperConfig)
 
     @classmethod
     def default(cls) -> "AppConfig":
@@ -104,6 +126,7 @@ class AppConfig:
             "hardware": asdict(self.hardware),
             "ui": asdict(self.ui),
             "calibration": asdict(self.calibration),
+            "choppers": asdict(self.choppers),
         }
         if self.motion_controllers is not None:
             data["motion_controllers"] = self.motion_controllers
@@ -139,12 +162,14 @@ class AppConfig:
         hardware_data = data.get("hardware", {})
         ui_data = data.get("ui", {})
         calibration_data = data.get("calibration", {})
+        chopper_data = data.get("choppers", {})
 
         return cls(
             hardware=HardwareConfig(**hardware_data) if hardware_data else HardwareConfig(),
             ui=UIConfig(**ui_data) if ui_data else UIConfig(),
             calibration=CalibrationConfig(**calibration_data) if calibration_data else CalibrationConfig(),
             motion_controllers=data.get("motion_controllers"),
+            choppers=ChopperConfig(**chopper_data) if chopper_data else ChopperConfig(),
         )
 
     @classmethod
