@@ -41,10 +41,11 @@ log = logging.getLogger(__name__)
 
 
 class _SingleChopperPanel(QGroupBox):
-    """Per-chopper sub-panel: enable checkbox, phase spinbox, freq label."""
+    """Per-chopper sub-panel: enable, phase, harmonic N/D, freq readout."""
 
     enable_changed = Signal(bool)
     phase_committed = Signal(int)
+    harmonic_committed = Signal(int, int)  # (n, d)
 
     def __init__(self, title: str, parent: Optional[QWidget] = None):
         super().__init__(title, parent)
@@ -83,6 +84,28 @@ class _SingleChopperPanel(QGroupBox):
         phase_row.addWidget(self._phase_apply)
         form.addRow("Phase:", phase_row)
 
+        # Harmonic N / D row: blade frequency = ref_freq * N / D
+        harmonic_row = QHBoxLayout()
+        self._n_spin = QSpinBox()
+        self._n_spin.setRange(1, 15)
+        self._n_spin.setPrefix("N=")
+        self._n_spin.setToolTip("Harmonic multiplier (manual 8.6 nharmonic, 1–15)")
+        self._n_spin.editingFinished.connect(self._on_harmonic_committed)
+        harmonic_row.addWidget(self._n_spin)
+
+        self._d_spin = QSpinBox()
+        self._d_spin.setRange(1, 15)
+        self._d_spin.setPrefix("D=")
+        self._d_spin.setToolTip("Harmonic divider (manual 8.7 dharmonic, 1–15)")
+        self._d_spin.editingFinished.connect(self._on_harmonic_committed)
+        harmonic_row.addWidget(self._d_spin)
+
+        self._harmonic_apply = QPushButton("Apply")
+        self._harmonic_apply.setMaximumWidth(70)
+        self._harmonic_apply.clicked.connect(self._on_harmonic_committed)
+        harmonic_row.addWidget(self._harmonic_apply)
+        form.addRow("Harmonic:", harmonic_row)
+
         self._freq_label = QLabel("—")
         self._freq_label.setStyleSheet("font-family: monospace;")
         form.addRow("Blade freq:", self._freq_label)
@@ -100,6 +123,9 @@ class _SingleChopperPanel(QGroupBox):
             self._enable_check.setEnabled(False)
             self._phase_spin.setEnabled(False)
             self._phase_apply.setEnabled(False)
+            self._n_spin.setEnabled(False)
+            self._d_spin.setEnabled(False)
+            self._harmonic_apply.setEnabled(False)
             self._freq_label.setText("—")
             self._status_label.setText("")
             return
@@ -107,6 +133,9 @@ class _SingleChopperPanel(QGroupBox):
         self._enable_check.setEnabled(True)
         self._phase_spin.setEnabled(True)
         self._phase_apply.setEnabled(True)
+        self._n_spin.setEnabled(True)
+        self._d_spin.setEnabled(True)
+        self._harmonic_apply.setEnabled(True)
         self.refresh()
 
     def refresh(self) -> None:
@@ -131,6 +160,18 @@ class _SingleChopperPanel(QGroupBox):
             self._status_label.setText(f"Read phase failed: {e}")
 
         try:
+            n = self._chopper.n_harmonic
+            d = self._chopper.d_harmonic
+            self._n_spin.blockSignals(True)
+            self._d_spin.blockSignals(True)
+            self._n_spin.setValue(n)
+            self._d_spin.setValue(d)
+            self._n_spin.blockSignals(False)
+            self._d_spin.blockSignals(False)
+        except Exception as e:
+            self._status_label.setText(f"Read harmonic failed: {e}")
+
+        try:
             actual = self._chopper.actual_frequency_hz
             self._freq_label.setText(f"{actual:.2f} Hz")
         except Exception as e:
@@ -140,9 +181,13 @@ class _SingleChopperPanel(QGroupBox):
 
     def set_busy(self, busy: bool) -> None:
         """Disable all interactive controls while ``busy``."""
-        self._enable_check.setEnabled(not busy and self._chopper is not None)
-        self._phase_spin.setEnabled(not busy and self._chopper is not None)
-        self._phase_apply.setEnabled(not busy and self._chopper is not None)
+        have_chopper = self._chopper is not None
+        self._enable_check.setEnabled(not busy and have_chopper)
+        self._phase_spin.setEnabled(not busy and have_chopper)
+        self._phase_apply.setEnabled(not busy and have_chopper)
+        self._n_spin.setEnabled(not busy and have_chopper)
+        self._d_spin.setEnabled(not busy and have_chopper)
+        self._harmonic_apply.setEnabled(not busy and have_chopper)
 
     # -- internal slots ----------------------------------------------------
 
@@ -175,6 +220,25 @@ class _SingleChopperPanel(QGroupBox):
             log.error("Set phase on %s failed: %s", self._chopper.port, e)
             self._status_label.setText(f"Set phase failed: {e}")
 
+    def _on_harmonic_committed(self) -> None:
+        if self._chopper is None:
+            return
+        n = int(self._n_spin.value())
+        d = int(self._d_spin.value())
+        try:
+            self._chopper.n_harmonic = n
+            self._chopper.d_harmonic = d
+            self.harmonic_committed.emit(n, d)
+            try:
+                actual = self._chopper.actual_frequency_hz
+                self._freq_label.setText(f"{actual:.2f} Hz")
+            except Exception:
+                pass
+            self._status_label.setText(f"Harmonic set to N={n} D={d}")
+        except Exception as e:
+            log.error("Set harmonic on %s failed: %s", self._chopper.port, e)
+            self._status_label.setText(f"Set harmonic failed: {e}")
+
 
 class ChopperControlWidget(QGroupBox):
     """Qt widget for an MC2000B chopper pair.
@@ -195,6 +259,8 @@ class ChopperControlWidget(QGroupBox):
     setup_requested = Signal(dict)
     pump_phase_changed = Signal(int)
     probe_phase_changed = Signal(int)
+    pump_harmonic_changed = Signal(int, int)  # (N, D)
+    probe_harmonic_changed = Signal(int, int)
 
     def __init__(
         self,
@@ -220,6 +286,8 @@ class ChopperControlWidget(QGroupBox):
 
         self._pump_panel.phase_committed.connect(self.pump_phase_changed)
         self._probe_panel.phase_committed.connect(self.probe_phase_changed)
+        self._pump_panel.harmonic_committed.connect(self.pump_harmonic_changed)
+        self._probe_panel.harmonic_committed.connect(self.probe_harmonic_changed)
 
         controls = QHBoxLayout()
 

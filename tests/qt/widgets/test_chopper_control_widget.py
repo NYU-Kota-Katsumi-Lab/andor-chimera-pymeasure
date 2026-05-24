@@ -89,6 +89,45 @@ class TestChopperControlWidgetWrite:
         assert pair.pump.enabled is False
 
 
+class TestChopperControlWidgetHarmonic:
+    def test_refresh_pulls_harmonic_from_chopper(self, qt_app, pair):
+        pair.pump.n_harmonic = 1
+        pair.pump.d_harmonic = 2
+        pair.probe.n_harmonic = 3
+        pair.probe.d_harmonic = 1
+        w = ChopperControlWidget(chopper_pair=pair)
+        w.refresh()
+        assert w.pump_panel._n_spin.value() == 1
+        assert w.pump_panel._d_spin.value() == 2
+        assert w.probe_panel._n_spin.value() == 3
+        assert w.probe_panel._d_spin.value() == 1
+
+    def test_harmonic_apply_writes_to_chopper(self, qt_app, pair):
+        w = ChopperControlWidget(chopper_pair=pair)
+        w.pump_panel._n_spin.setValue(2)
+        w.pump_panel._d_spin.setValue(3)
+        w.pump_panel._on_harmonic_committed()
+        assert pair.pump.n_harmonic == 2
+        assert pair.pump.d_harmonic == 3
+
+    def test_harmonic_signal_emitted(self, qt_app, pair):
+        w = ChopperControlWidget(chopper_pair=pair)
+        captured = []
+        w.pump_harmonic_changed.connect(lambda n, d: captured.append((n, d)))
+        w.pump_panel._n_spin.setValue(1)
+        w.pump_panel._d_spin.setValue(2)
+        w.pump_panel._on_harmonic_committed()
+        assert captured == [(1, 2)]
+
+    def test_harmonic_apply_button_clickable(self, qt_app, pair):
+        w = ChopperControlWidget(chopper_pair=pair)
+        w.probe_panel._n_spin.setValue(1)
+        w.probe_panel._d_spin.setValue(1)
+        w.probe_panel._harmonic_apply.click()
+        assert pair.probe.n_harmonic == 1
+        assert pair.probe.d_harmonic == 1
+
+
 class TestChopperControlWidgetSetup:
     def test_setup_button_applies_pair_config(self, qt_app, pair):
         w = ChopperControlWidget(chopper_pair=pair)
@@ -118,6 +157,9 @@ class TestChopperControlWidgetBusy:
         w.set_busy(True)
         assert w.pump_panel._phase_spin.isEnabled() is False
         assert w.probe_panel._enable_check.isEnabled() is False
+        assert w.pump_panel._n_spin.isEnabled() is False
+        assert w.pump_panel._d_spin.isEnabled() is False
+        assert w.pump_panel._harmonic_apply.isEnabled() is False
         assert w.setup_button.isEnabled() is False
 
     def test_set_busy_leaves_refresh_enabled(self, qt_app, pair):
