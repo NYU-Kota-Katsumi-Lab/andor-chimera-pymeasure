@@ -23,6 +23,7 @@ from andor_qt.ta.engine import TransientAbsorptionEngine
 from andor_qt.ta.hdf5_writer import TADataWriter, auto_filename
 from andor_qt.ta.monitor_engine import TAMonitorEngine
 from andor_qt.ta.scan_config import TAScanConfig
+from andor_qt.widgets.hardware.chopper_control import ChopperControlWidget
 from andor_qt.widgets.ta.live_display import TALiveDisplayWidget
 from andor_qt.widgets.ta.monitor_widget import TAMonitorWidget
 from andor_qt.widgets.ta.scan_config_widget import TAScanConfigWidget
@@ -141,6 +142,10 @@ class TAWindowPanel(QWidget):
         self._left_tabs.addTab(self._config_widget, "Scan")
         self._left_tabs.addTab(self._monitor_widget, "Monitor")
 
+        # --- Chopper control widget ---
+        chopper_pair = getattr(hw_manager, "chopper_pair", None)
+        self._chopper_widget = ChopperControlWidget(chopper_pair=chopper_pair)
+
         # --- Status / trigger-test bar ---
         self._status_label = QLabel("Ready")
         self._status_label.setStyleSheet("padding: 2px 6px; font-size: 12px;")
@@ -179,8 +184,16 @@ class TAWindowPanel(QWidget):
         live_scroll.setWidgetResizable(True)
         live_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
+        # Pack tabs + chopper widget into a single left container so the
+        # splitter still treats the left side as one column.
+        left_container = QWidget()
+        left_layout = QVBoxLayout(left_container)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.addWidget(self._left_tabs, stretch=1)
+        left_layout.addWidget(self._chopper_widget, stretch=0)
+
         splitter = QSplitter()
-        splitter.addWidget(self._left_tabs)
+        splitter.addWidget(left_container)
         splitter.addWidget(live_scroll)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
@@ -226,6 +239,18 @@ class TAWindowPanel(QWidget):
         self._monitor_engine.user_prompt.connect(self._on_user_prompt)
         self._monitor_engine.static_completed.connect(self._on_static_completed)
         self._monitor_engine.single_phase_completed.connect(self._on_single_phase_completed)
+
+        # camera_busy → chopper widget: disable writes during scan/monitor
+        self.camera_busy.connect(self._chopper_widget.set_busy)
+
+        # Re-bind the chopper widget once HardwareManager finishes its
+        # background init (panel is built before chopper_pair exists).
+        from andor_qt.core.signals import get_hardware_signals
+        get_hardware_signals().choppers_initialized.connect(self._on_choppers_initialized)
+        # In case init already completed before this connection was made,
+        # do an opportunistic bind now.
+        if getattr(self._hw_manager, "chopper_pair", None) is not None:
+            self._chopper_widget.set_pair(self._hw_manager.chopper_pair)
 
         # Engine → status / button state
         self._engine.scan_started.connect(self._on_scan_started)
@@ -569,6 +594,19 @@ class TAWindowPanel(QWidget):
         self._status_label.setText(f"Error: {message}")
         self._end_scan()
 
+    @Slot(dict)
+    def _on_choppers_initialized(self, info: dict) -> None:
+        """Re-bind the chopper widget once HardwareManager finishes init."""
+        pair = getattr(self._hw_manager, "chopper_pair", None)
+        self._chopper_widget.set_pair(pair)
+        if pair is not None:
+            self._chopper_widget.refresh()
+        log.info(
+            "Chopper widget re-bound (pump=%s connected=%s, probe=%s connected=%s)",
+            info.get("pump_port", ""), info.get("pump_connected", False),
+            info.get("probe_port", ""), info.get("probe_connected", False),
+        )
+
     @Slot(str)
     def _on_engine_user_prompt(self, msg: str) -> None:
         """Handle user prompt from engine (e.g. static_onoff pump block)."""
@@ -855,3 +893,7 @@ class TAWindowPanel(QWidget):
     @property
     def live_display(self) -> TALiveDisplayWidget:
         return self._live_display
+
+    @property
+    def chopper_widget(self) -> ChopperControlWidget:
+        return self._chopper_widget

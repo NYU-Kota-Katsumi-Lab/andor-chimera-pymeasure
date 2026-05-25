@@ -49,6 +49,9 @@ class HardwareSignals(QObject):
     axis_position_changed = Signal(str, float)  # (axis_name, current_position)
     axis_moving = Signal(str, bool)  # (axis_name, is_moving)
 
+    # Chopper signals
+    choppers_initialized = Signal(dict)  # {pump_port, probe_port, pump_connected, probe_connected}
+
     # General signals
     error_occurred = Signal(str, str)  # (source, message)
     status_message = Signal(str)  # status bar message
