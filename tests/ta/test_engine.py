@@ -15,7 +15,11 @@ import numpy as np
 import pytest
 
 from andor_qt.ta.scan_config import TAScanConfig
-from andor_qt.ta.engine import TransientAbsorptionEngine, _save_spectrum_file
+from andor_qt.ta.engine import (
+    TransientAbsorptionEngine,
+    _save_spectrum_file,
+    _validate_dark_shape,
+)
 from andor_qt.ta.acquisition import acquire_delta_signal_at_delay
 
 
@@ -99,6 +103,45 @@ class TestSaveSpectrumFileNoHeaders:
         files = list(tmp_path.glob("*.txt"))
         lines = files[0].read_text().splitlines()
         assert len(lines) == 16
+
+
+# ---------------------------------------------------------------------------
+# _validate_dark_shape
+# ---------------------------------------------------------------------------
+
+
+class TestValidateDarkShape:
+    def test_none_dark_passes_through(self):
+        dark, warn = _validate_dark_shape(None, 200)
+        assert dark is None
+        assert warn is None
+
+    def test_matching_shape_returns_dark_unchanged(self):
+        dark = np.arange(200, dtype=float)
+        result, warn = _validate_dark_shape(dark, 200)
+        assert np.array_equal(result, dark)
+        assert warn is None
+
+    def test_mismatched_shape_clears_dark_and_warns(self):
+        dark = np.zeros(1600)  # hbin=1
+        result, warn = _validate_dark_shape(dark, 200)  # scan at hbin=8
+        assert result is None
+        assert warn is not None
+        assert "(1600,)" in warn
+        assert "200" in warn
+        assert "hbin" in warn.lower()
+
+    def test_unknown_expected_length_passes_through(self):
+        dark = np.zeros(1600)
+        result, warn = _validate_dark_shape(dark, None)
+        assert result is not None
+        assert warn is None
+
+    def test_two_d_dark_is_rejected(self):
+        dark = np.zeros((10, 200))
+        result, warn = _validate_dark_shape(dark, 200)
+        assert result is None
+        assert warn is not None
 
 
 # ---------------------------------------------------------------------------

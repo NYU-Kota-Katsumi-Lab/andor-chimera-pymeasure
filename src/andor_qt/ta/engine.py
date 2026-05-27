@@ -49,6 +49,46 @@ log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
 
 
+def _validate_dark_shape(
+    dark: Optional[np.ndarray], expected_length: Optional[int]
+) -> tuple[Optional[np.ndarray], Optional[str]]:
+    """Validate that a dark frame matches the expected spectrum length.
+
+    A dark whose length differs from the binned spectrum cannot be broadcast
+    against acquired frames, and the engine's per-point try/except would
+    silently log + skip every point. This helper catches the mismatch up
+    front so it can be reported once and the scan can proceed without dark
+    subtraction.
+
+    Args:
+        dark: Stored dark spectrum (1-D array) or ``None``.
+        expected_length: Expected spectrum length (camera xpixels // hbin),
+            or ``None`` if not determinable.
+
+    Returns:
+        ``(dark_or_none, warning_message_or_none)``. When the shape is
+        valid (or there is no dark), ``warning_message_or_none`` is ``None``.
+        On mismatch, the returned dark is ``None`` and the message explains
+        what went wrong and how to fix it.
+    """
+    if dark is None:
+        return None, None
+    dark_arr = np.asarray(dark)
+    if expected_length is None or expected_length <= 0:
+        # Can't validate — pass through unchanged.
+        return dark_arr, None
+    if dark_arr.ndim != 1 or dark_arr.shape[0] != expected_length:
+        msg = (
+            f"Dark frame shape {tuple(dark_arr.shape)} does not match the "
+            f"current spectrum length ({expected_length},). The dark was "
+            f"likely acquired with a different hbin. Proceeding without "
+            f"dark subtraction — re-acquire the dark with the current "
+            f"camera settings to enable it."
+        )
+        return None, msg
+    return dark_arr, None
+
+
 def _format_eta(
     elapsed_s: float, completed: int, remaining: int,
     est_per_pt_s: float = 0.0,
@@ -216,6 +256,23 @@ class _ScanWorker(QObject):
             self._wavelengths = np.asarray(get_wl(hbin=hbin))
         else:
             self._wavelengths = np.array([])
+
+        # Validate dark-frame shape against the binned spectrum length. A
+        # mismatched dark (e.g. acquired at a different hbin) would broadcast-
+        # fail on every point and silently skip the whole scan. Catch it once
+        # here, warn loudly, and proceed without dark subtraction.
+        expected_len: Optional[int] = None
+        if isinstance(self._wavelengths, np.ndarray) and self._wavelengths.size:
+            expected_len = int(self._wavelengths.shape[0])
+        else:
+            cam = getattr(hw, "camera", None)
+            xpx = getattr(cam, "xpixels", None) if cam is not None else None
+            if isinstance(xpx, int) and isinstance(hbin, int) and hbin > 0:
+                expected_len = xpx // hbin
+        self._dark, _dark_warning = _validate_dark_shape(self._dark, expected_len)
+        if _dark_warning is not None:
+            log.warning(_dark_warning)
+            self.status_updated.emit("WARNING: " + _dark_warning)
 
         # Create timestamped subfolder for spectra if saving is enabled
         spectra_folder = None
