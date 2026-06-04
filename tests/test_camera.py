@@ -358,3 +358,83 @@ class TestMockCameraSDKSettings:
         """apply_camera_settings raises if not initialized."""
         with pytest.raises(RuntimeError, match="not initialized"):
             camera.apply_camera_settings({"vs_speed_index": 0})
+
+
+class TestEMGainMode:
+    """SetEMGainMode(3) at init makes the integer passed to SetEMCCDGain the
+    actual electron multiplication factor (instead of an opaque DAC code).
+    Reproducibility across sessions and HDF5 metadata becomes meaningful."""
+
+    def test_initialize_sets_em_gain_mode_to_real_em_gain(self, camera):
+        """After initialize(), the camera is in Real EM Gain mode (mode 3)."""
+        camera.initialize()
+        assert camera.em_gain_mode == 3
+
+    def test_initialize_records_real_em_gain_range(self, camera):
+        """GetEMGainRange is queried AFTER SetEMGainMode(3), so the recorded
+        range is the physical-gain envelope (mode-3) rather than 8-bit DAC."""
+        camera.initialize()
+        low, high = camera.info.em_gain_range
+        # Mode 3 returns the physical envelope (mock returns (1, 300));
+        # mode 0 would return (0, 255). Anything other than (1, 300) means
+        # GetEMGainRange ran before SetEMGainMode.
+        assert (low, high) == (1, 300)
+
+    def test_initialize_falls_back_when_set_mode_fails(self, camera, caplog):
+        """If SetEMGainMode fails, em_gain_mode falls back to 0 with a warning."""
+        # Patch the SDK's SetEMGainMode to return a non-success code
+        original_initialize = camera.initialize
+
+        def _patched_initialize():
+            # Install patch BEFORE initialize triggers any SDK imports
+            from andor_pymeasure.instruments.mock import MockAtmcd
+            MockAtmcd.SetEMGainMode = lambda self, mode: 20992  # DRV_NOT_AVAILABLE
+            try:
+                original_initialize()
+            finally:
+                # restore
+                def real(self, mode):
+                    if mode not in (0, 1, 2, 3):
+                        return 20066
+                    self._state.em_gain_mode = mode
+                    return 20002
+                MockAtmcd.SetEMGainMode = real
+
+        _patched_initialize()
+        assert camera.em_gain_mode == 0
+        assert "SetEMGainMode" in caplog.text
+
+    def test_get_em_gain_returns_set_value(self, initialized_camera):
+        """get_em_gain() reads back the integer that SetEMCCDGain stored."""
+        initialized_camera.set_em_gain(50)
+        assert initialized_camera.get_em_gain() == 50
+
+    def test_get_em_gain_not_initialized_returns_zero(self, camera):
+        """get_em_gain() on uninitialized camera returns 0, does not raise."""
+        assert camera.get_em_gain() == 0
+
+    def test_apply_camera_settings_warns_on_em_gain_mismatch(
+        self, initialized_camera, caplog
+    ):
+        """If the readback after SetEMCCDGain differs from the request, warn."""
+        # Force the mock to silently store a different gain on the next set.
+        from andor_pymeasure.instruments.mock import MockAtmcd
+
+        original_set = MockAtmcd.SetEMCCDGain
+
+        def _mismatching_set(self, gain):
+            self._state.em_gain = gain + 7  # off by 7
+            return 20002
+
+        MockAtmcd.SetEMCCDGain = _mismatching_set
+        try:
+            initialized_camera.apply_camera_settings({
+                "amplifier_type": 0,
+                "em_gain": 50,
+            })
+        finally:
+            MockAtmcd.SetEMCCDGain = original_set
+
+        msg = caplog.text.lower()
+        assert "em gain" in msg
+        assert ("readback" in msg) or ("mismatch" in msg)

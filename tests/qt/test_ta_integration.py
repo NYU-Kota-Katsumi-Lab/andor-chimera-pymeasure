@@ -827,6 +827,38 @@ class TestPostScanSave:
             assert hw.attrs["grating_index"] == 1
         panel.deleteLater()
 
+    def test_save_records_em_gain_mode_and_actual(self, qt_app, mock_hw_manager, tmp_path):
+        """/hardware records em_gain_mode and em_gain_actual so analysts can tell
+        whether the saved em_gain integer is a physical factor (mode 3) or DAC."""
+        import numpy as np
+        import h5py
+        from unittest.mock import patch
+        from andor_qt.ta.scan_config import TAScanConfig
+        from andor_qt.windows.ta_panel import TAWindowPanel
+
+        # Real ints, not MagicMock attributes, so int() coercion is meaningful.
+        mock_hw_manager.camera.em_gain_mode = 3
+        mock_hw_manager.camera.get_em_gain = MagicMock(return_value=50)
+
+        panel = TAWindowPanel(hw_manager=mock_hw_manager)
+        config = TAScanConfig(delay_list=[0.0], n_averages=1, sample_name="em_test")
+        panel._reset_scan_buffer(config, {"hbin": 1, "exposure_time": 0.001})
+        panel._on_buffer_signal_updated(0.0, np.linspace(400, 800, 3), np.zeros(3))
+        panel._on_buffer_raw_pair_updated(np.ones(3) * 100, np.ones(3) * 90, 1, 0, 2)
+
+        out_path = tmp_path / "em_meta.h5"
+        with patch(
+            "PySide6.QtWidgets.QFileDialog.getSaveFileName",
+            return_value=(str(out_path), ""),
+        ), patch("PySide6.QtWidgets.QMessageBox.information"):
+            panel._on_save_last_scan()
+
+        with h5py.File(out_path, "r") as f:
+            hw = f["hardware"]
+            assert hw.attrs["em_gain_mode"] == 3
+            assert hw.attrs["em_gain_actual"] == 50
+        panel.deleteLater()
+
     def test_save_hdf5_with_mismatched_pump_ref_counts(self, qt_app, mock_hw_manager, tmp_path):
         """Save succeeds even when pump/ref spectra are shorter than delays."""
         import numpy as np

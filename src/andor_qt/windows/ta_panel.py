@@ -504,6 +504,15 @@ class TAWindowPanel(QWidget):
                 temp = getattr(cam, "temperature", None)
                 if temp is not None:
                     info["camera_temperature_c"] = float(temp)
+                # EM gain mode tells analysts whether the em_gain integer in
+                # /metadata is a physical multiplication factor (mode 3) or
+                # an opaque DAC code (mode 0/1).
+                em_mode = getattr(cam, "em_gain_mode", None)
+                if em_mode is not None:
+                    info["em_gain_mode"] = int(em_mode)
+                get_em = getattr(cam, "get_em_gain", None)
+                if callable(get_em):
+                    info["em_gain_actual"] = int(get_em())
         except Exception:
             pass
 

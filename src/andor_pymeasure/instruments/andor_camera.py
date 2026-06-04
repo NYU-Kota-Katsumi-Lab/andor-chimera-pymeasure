@@ -67,6 +67,7 @@ class AndorCamera:
         self._info: Optional[CameraInfo] = None
         self._cooler_on = False
         self._current_hbin: int = 1  # tracks last applied hbin for get_spectrum()
+        self._em_gain_mode: int = 0  # set by initialize(); 3 = "Real EM Gain"
 
     @property
     def info(self) -> Optional[CameraInfo]:
@@ -82,6 +83,17 @@ class AndorCamera:
     def ypixels(self) -> int:
         """Get vertical pixel count."""
         return self._info.ypixels if self._info else 0
+
+    @property
+    def em_gain_mode(self) -> int:
+        """Get the active EM gain interpretation mode.
+
+        Returns:
+            0 = 8-bit DAC (default at SDK boot, opaque code 0-255),
+            1 = 12-bit DAC, 2 = Linear, 3 = Real EM Gain (integer = actual
+            electron multiplication factor).
+        """
+        return self._em_gain_mode
 
     @property
     def temperature(self) -> float:
@@ -154,6 +166,23 @@ class AndorCamera:
             ret, serial = self._sdk.GetCameraSerialNumber()
             ret, xpixels, ypixels = self._sdk.GetDetector()
             ret, xsize, ysize = self._sdk.GetPixelSize()
+
+            # Switch EM gain to Real EM Gain (mode 3) so the integer passed
+            # to SetEMCCDGain is the actual electron multiplication factor
+            # rather than an opaque 8-bit DAC code. Must come BEFORE
+            # GetEMGainRange so the recorded range reflects physical gains.
+            # Cameras without EM amp / older firmware may return non-success
+            # — fall back to the SDK default (mode 0) in that case.
+            ret_em = self._sdk.SetEMGainMode(3)
+            if ret_em == self._errors.Error_Codes.DRV_SUCCESS:
+                self._em_gain_mode = 3
+            else:
+                self._em_gain_mode = 0
+                log.warning(
+                    f"SetEMGainMode(3) returned {ret_em} — falling back to "
+                    "default DAC mode; em_gain values will be opaque codes"
+                )
+
             ret, em_low, em_high = self._sdk.GetEMGainRange()
 
             self._info = CameraInfo(
@@ -675,6 +704,25 @@ class AndorCamera:
             self._sdk.SetEMCCDGain(gain)
             log.debug(f"EM gain set to {gain}")
 
+    def get_em_gain(self) -> int:
+        """Return the currently applied EM gain.
+
+        Units depend on ``em_gain_mode``: in mode 3 (Real EM Gain) the value
+        is the physical electron multiplication factor; in mode 0/1 it is a
+        DAC code.
+
+        Returns:
+            Current EM gain integer, or 0 if camera is not initialized / SDK
+            call fails.
+        """
+        if not self._initialized:
+            return 0
+        with self._lock:
+            ret, gain = self._sdk.GetEMCCDGain()
+            if ret == self._errors.Error_Codes.DRV_SUCCESS:
+                return int(gain)
+        return 0
+
     def get_preamp_gains(self) -> list:
         """Get available pre-amplifier gain options.
 
@@ -783,6 +831,11 @@ class AndorCamera:
                         f"EM gain {settings['em_gain']} clamped to [{em_low}, {em_high}] → {gain}"
                     )
                 self._sdk.SetEMCCDGain(gain)
+                ret_g, actual = self._sdk.GetEMCCDGain()
+                if ret_g == self._errors.Error_Codes.DRV_SUCCESS and actual != gain:
+                    log.warning(
+                        f"EM gain readback mismatch: set={gain} actual={actual}"
+                    )
             if "preamp_gain_index" in settings:
                 self._sdk.SetPreAmpGain(settings["preamp_gain_index"])
 

@@ -54,6 +54,7 @@ class MockCameraState:
     hs_speed_index: int = 0         # default: 3 MHz
     amplifier_type: int = 0         # 0=EM, 1=conventional
     em_gain: int = 1
+    em_gain_mode: int = 0   # 0=8-bit DAC, 1=12-bit DAC, 2=linear, 3=Real EM Gain
     preamp_gain_index: int = 0
     single_track_centre: int = 128
     single_track_height: int = 10
@@ -155,8 +156,36 @@ class MockAtmcd:
         return (DRV_SUCCESS, self._state.pixel_width, self._state.pixel_height)
 
     def GetEMGainRange(self) -> Tuple[int, int, int]:
-        """Get EM gain range."""
-        return (DRV_SUCCESS, 0, 1000)
+        """Get EM gain range for the currently selected EM gain mode.
+
+        Per the Andor SDK, the returned range depends on the mode set via
+        ``SetEMGainMode`` and the sensor temperature. The mock returns
+        canonical values for each documented mode.
+        """
+        mode = self._state.em_gain_mode
+        if mode == 0:
+            return (DRV_SUCCESS, 0, 255)        # 8-bit DAC
+        if mode == 1:
+            return (DRV_SUCCESS, 0, 4095)       # 12-bit DAC
+        # Modes 2 (linear) and 3 (Real EM Gain): physical gain envelope.
+        # Real cameras report ~(1, 250-300) at -65 C; we pick a stable value
+        # so tests can assert against it.
+        return (DRV_SUCCESS, 1, 300)
+
+    def SetEMGainMode(self, mode: int) -> int:
+        """Set EM gain interpretation mode.
+
+        0 = 8-bit DAC (0-255), 1 = 12-bit DAC (0-4095),
+        2 = linear scale, 3 = Real EM Gain (number = multiplication factor).
+        """
+        if mode not in (0, 1, 2, 3):
+            return 20066  # DRV_P1INVALID — matches real SDK behavior
+        self._state.em_gain_mode = mode
+        return DRV_SUCCESS
+
+    def GetEMCCDGain(self) -> Tuple[int, int]:
+        """Return the current EM gain integer in the active mode's units."""
+        return (DRV_SUCCESS, self._state.em_gain)
 
     def GetTemperature(self) -> Tuple[int, float]:
         """Get current temperature with simulated cooling/warming."""
