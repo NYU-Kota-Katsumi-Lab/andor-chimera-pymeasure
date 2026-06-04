@@ -63,8 +63,10 @@ class TAScanConfigWidget(QGroupBox):
 
     def __init__(self, parent=None):
         super().__init__("TA Scan Configuration", parent)
+        self._loading = True
         self._build_ui()
         self._restore_settings()
+        self._loading = False
         # _build_ui calls _on_acq_mode_changed → apply_mode_preset, which
         # clobbers persisted exposure. Re-load camera settings here so the
         # value the user set in a previous session takes precedence.
@@ -703,6 +705,8 @@ class TAScanConfigWidget(QGroupBox):
 
     def _save_settings(self) -> None:
         """Persist current widget values to QSettings."""
+        if getattr(self, "_loading", False):
+            return
         s = QSettings("AndorSpectrometer", "TAScanConfig")
         # Stage tab
         s.setValue("stg_start", self._stg_start.value())
@@ -767,7 +771,9 @@ class TAScanConfigWidget(QGroupBox):
         spf = s.value("shots_per_frame", 2)
         if spf is not None:
             self._shots_per_frame_spin.setValue(int(spf))
-        self._external_trigger_check.setChecked(s.value("external_trigger", "false") == "true")
+        self._external_trigger_check.setChecked(
+            str(s.value("external_trigger", "false")).lower() in ("true", "1")
+        )
         self._swap_tags_check.setChecked(str(s.value("swap_tags", "false")).lower() in ("true", "1"))
         idx = self._scan_dir_combo.findText(str(s.value("scan_direction", "forward")))
         if idx >= 0:
@@ -776,6 +782,10 @@ class TAScanConfigWidget(QGroupBox):
         self._stage_axis_spin.setValue(int(s.value("stage_axis", 2)))
         # Save directories
         self._save_hdf5_dir_edit.setText(str(s.value("hdf5_dir", "")))
-        self._save_hdf5_check.setChecked(s.value("hdf5_enabled", "false") == "true")
+        self._save_hdf5_check.setChecked(
+            str(s.value("hdf5_enabled", "false")).lower() in ("true", "1")
+        )
         self._save_spectra_dir_edit.setText(str(s.value("spectra_dir", "")))
-        self._save_spectra_check.setChecked(s.value("spectra_enabled", "false") == "true")
+        self._save_spectra_check.setChecked(
+            str(s.value("spectra_enabled", "false")).lower() in ("true", "1")
+        )

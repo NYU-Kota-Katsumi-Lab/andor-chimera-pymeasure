@@ -285,3 +285,66 @@ class TestTAScanConfigWidgetYAML:
 
         assert widget.n_averages_spin.value() == 7
         assert widget.sample_name_edit.text() == "roundtrip_test"
+
+
+class TestTAScanConfigWidgetQSettingsBoolPersistence:
+    """Regression: QSettings stores bools natively but earlier load code compared
+    to the string "true", so save_hdf5/save_spectra/external_trigger checkboxes
+    silently reverted to OFF every launch — even though the directory text was
+    restored. Result: scans ran without writing files."""
+
+    def _make_widget(self, qt_app):
+        w = TAScanConfigWidget()
+        return w
+
+    def test_save_hdf5_check_persists_across_widget_recreation(self, qt_app):
+        from PySide6.QtCore import QSettings
+        QSettings("AndorSpectrometer", "TAScanConfig").clear()
+        w1 = self._make_widget(qt_app)
+        try:
+            w1._save_hdf5_dir_edit.setText("C:/data/h5")
+            w1._save_hdf5_check.setChecked(True)
+            w1._save_settings()
+        finally:
+            w1.deleteLater()
+
+        w2 = self._make_widget(qt_app)
+        try:
+            assert w2._save_hdf5_check.isChecked() is True
+            assert w2._save_hdf5_dir_edit.text() == "C:/data/h5"
+        finally:
+            w2.deleteLater()
+
+    def test_save_spectra_check_persists_across_widget_recreation(self, qt_app):
+        from PySide6.QtCore import QSettings
+        QSettings("AndorSpectrometer", "TAScanConfig").clear()
+        w1 = self._make_widget(qt_app)
+        try:
+            w1._save_spectra_dir_edit.setText("C:/data/spectra")
+            w1._save_spectra_check.setChecked(True)
+            w1._save_settings()
+        finally:
+            w1.deleteLater()
+
+        w2 = self._make_widget(qt_app)
+        try:
+            assert w2._save_spectra_check.isChecked() is True
+            assert w2._save_spectra_dir_edit.text() == "C:/data/spectra"
+        finally:
+            w2.deleteLater()
+
+    def test_external_trigger_check_persists_across_widget_recreation(self, qt_app):
+        from PySide6.QtCore import QSettings
+        QSettings("AndorSpectrometer", "TAScanConfig").clear()
+        w1 = self._make_widget(qt_app)
+        try:
+            w1._external_trigger_check.setChecked(True)
+            w1._save_settings()
+        finally:
+            w1.deleteLater()
+
+        w2 = self._make_widget(qt_app)
+        try:
+            assert w2._external_trigger_check.isChecked() is True
+        finally:
+            w2.deleteLater()
