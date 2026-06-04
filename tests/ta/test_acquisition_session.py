@@ -575,3 +575,71 @@ class TestIncrementalAccumulation:
         with AcquisitionSession(hw, config, phase_reader=reader, read_interval=0.01) as session:
             with pytest.raises(RuntimeError, match="aborted"):
                 session.acquire_one_cycle(abort_check=_abort_after_2_data_reads)
+
+
+class TestChopper2x2Heartbeat:
+    """Heartbeat logs let us spot stalls inside the SDK that the per-iteration
+    safety nets miss (e.g. GetImages16 hangs without returning). Each cycle
+    logs at the start and then again every ``_heartbeat_interval`` seconds
+    while the read loop spins."""
+
+    def test_logs_cycle_start(self, caplog):
+        """A 'cycle start' marker is logged at the top of every cycle."""
+        from andor_qt.ta.acquisition import AcquisitionSession
+        hw = _make_multi_chunk_hw(1200.0, 1000.0, frames_per_chunk=10)
+        reader = MockNIDAQChopper2x2Reader()
+        config = _make_config("chopper_2x2", n_averages=5)
+
+        with caplog.at_level("INFO", logger="andor_qt.ta.acquisition"):
+            with AcquisitionSession(hw, config, phase_reader=reader,
+                                    read_interval=0.001) as session:
+                session.acquire_one_cycle()
+
+        markers = [r for r in caplog.records if "cycle start" in r.getMessage()]
+        assert len(markers) >= 1, (
+            "Expected a 'cycle start' log; got: "
+            + ", ".join(r.getMessage()[:80] for r in caplog.records)
+        )
+
+    def test_heartbeat_includes_state(self, caplog):
+        """Heartbeat message names frames/ON/OFF/empty so a stall is diagnosable."""
+        from andor_qt.ta.acquisition import AcquisitionSession
+        hw = _make_multi_chunk_hw(1200.0, 1000.0, frames_per_chunk=4,
+                                  initial_empty=3)
+        reader = MockNIDAQChopper2x2Reader()
+        config = _make_config("chopper_2x2", n_averages=20)
+
+        with caplog.at_level("INFO", logger="andor_qt.ta.acquisition"):
+            with AcquisitionSession(hw, config, phase_reader=reader,
+                                    read_interval=0.001) as session:
+                session._heartbeat_interval = 0.0  # log every iteration
+                session.acquire_one_cycle()
+
+        hb = [r.getMessage() for r in caplog.records
+              if "heartbeat" in r.getMessage()]
+        assert len(hb) >= 1, "Expected at least one heartbeat log"
+        # First heartbeat should reference the diagnostic fields
+        msg = hb[0]
+        assert "frames" in msg
+        assert "ON" in msg
+        assert "OFF" in msg
+        assert "empty" in msg
+
+    def test_heartbeat_throttled_by_interval(self, caplog):
+        """With a large interval, no heartbeat fires for a short fast acquisition."""
+        from andor_qt.ta.acquisition import AcquisitionSession
+        hw = _make_multi_chunk_hw(1200.0, 1000.0, frames_per_chunk=100)
+        reader = MockNIDAQChopper2x2Reader()
+        config = _make_config("chopper_2x2", n_averages=10)
+
+        with caplog.at_level("INFO", logger="andor_qt.ta.acquisition"):
+            with AcquisitionSession(hw, config, phase_reader=reader,
+                                    read_interval=0.001) as session:
+                session._heartbeat_interval = 100.0  # very long
+                session.acquire_one_cycle()
+
+        hb = [r for r in caplog.records if "heartbeat" in r.getMessage()]
+        assert len(hb) == 0, (
+            f"Expected no heartbeats with interval=100s, got {len(hb)}: "
+            + "; ".join(r.getMessage()[:80] for r in hb)
+        )

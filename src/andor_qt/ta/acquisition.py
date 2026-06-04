@@ -618,6 +618,11 @@ class AcquisitionSession:
         self._phase_reader = phase_reader
         self._camera_running = False
         self._read_interval = read_interval
+        # Wall-clock interval between diagnostic heartbeat logs emitted by
+        # ``_acquire_chopper_cycle``.  Set to 0 to log every iteration; large
+        # to disable.  Lets us tell whether a long acquisition is iterating
+        # normally or blocked inside the SDK without returning.
+        self._heartbeat_interval = 1.0
         self._is_chopper = (
             config.acquisition_mode == "chopper_2x2"
             and phase_reader is not None
@@ -706,6 +711,8 @@ class AcquisitionSession:
         spf = getattr(config, "shots_per_frame", 2)
         n_target = config.n_averages
 
+        log.info(f"chopper_2x2 cycle start: n_target={n_target} pairs, spf={spf}")
+
         # Drain stale frames AND their matching tags together to stay in sync.
         # Reading frames first, then exactly n_frames * spf tags ensures the
         # drain doesn't desync the tag-to-frame alignment.
@@ -729,8 +736,18 @@ class AcquisitionSession:
         t0 = time.perf_counter()
         empty_reads = 0
         max_empty_reads = 10  # give up after 10 consecutive empty reads (~10s)
+        hb_interval = float(getattr(self, "_heartbeat_interval", 1.0))
+        last_hb = t0
 
         while min(n_on, n_off) < n_target:
+            now = time.perf_counter()
+            if now - last_hb >= hb_interval:
+                log.info(
+                    f"chopper_2x2 heartbeat: frames={n_frames_total} "
+                    f"ON={n_on} OFF={n_off} empty={empty_reads} "
+                    f"elapsed={now - t0:.1f}s"
+                )
+                last_hb = now
             if abort_check is not None and abort_check():
                 raise RuntimeError("chopper_2x2: acquisition aborted")
 
