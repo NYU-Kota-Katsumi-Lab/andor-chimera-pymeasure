@@ -217,6 +217,102 @@ def _interpret_gain_sweep(
             f"change with gain; either amp didn't switch or register is dead.{std_signal}")
 
 
+def _run_shg_evaluator(cam, args) -> int:
+    """Take one conventional frame, estimate peak signal in electrons, and
+    print the EM-vs-conventional amplifier recommendation.
+
+    Skips the cooling step — the user is responsible for ensuring the camera
+    is at a sensible temperature for the measurement they care about.
+    """
+    from andor_qt.utils.shg_evaluator import (
+        default_adu_per_electron,
+        default_read_noise_e,
+        recommend_amplifier_for_shg,
+    )
+
+    print("-- Acquiring one conventional frame --")
+    cam.apply_camera_settings({
+        "trigger_mode": "internal",
+        "exposure_time": args.exposure,
+        "vs_speed_index": args.vs_speed,
+        "hs_speed_index": args.hs_speed,
+        "amplifier_type": 1,
+        "preamp_gain_index": args.preamp_gain,
+        "hbin": args.hbin,
+        "vbin": 1,
+        "read_area_mode": "full",
+    })
+    time.sleep(0.2)
+
+    spectrum = np.asarray(cam.get_spectrum(), dtype=np.float64)
+    peak_adu = float(spectrum.max())
+    median_adu = float(np.median(spectrum))
+    p10_adu = float(np.percentile(spectrum, 10))
+    # Baseline estimate: 10th percentile (more robust than median if the SHG
+    # peak occupies many spectral pixels).
+    baseline_adu = p10_adu
+    signal_adu = peak_adu - baseline_adu
+
+    if args.adu_per_e is not None:
+        adu_per_e = float(args.adu_per_e)
+        adu_per_e_source = "user override"
+    else:
+        adu_per_e = default_adu_per_electron(
+            amplifier_type=1,
+            hs_speed_index=args.hs_speed,
+            preamp_gain_index=args.preamp_gain,
+        )
+        adu_per_e_source = "DU970P table (approximate)"
+
+    if args.read_noise_e is not None:
+        rn_e = float(args.read_noise_e)
+        rn_source = "user override"
+    else:
+        rn_e = default_read_noise_e(amplifier_type=1, hs_speed_index=args.hs_speed)
+        rn_source = "DU970P table (approximate)"
+
+    signal_e = signal_adu * adu_per_e
+
+    print(f"  peak ADU       = {peak_adu:.1f}")
+    print(f"  median ADU     = {median_adu:.1f}")
+    print(f"  10th pct ADU   = {p10_adu:.1f}  (baseline estimate)")
+    print(f"  signal (peak - baseline) = {signal_adu:.1f} ADU")
+    print()
+    print(f"  e- per ADU     = {adu_per_e:.2f}  ({adu_per_e_source})")
+    print(f"  read noise     = {rn_e:.1f} e- rms  ({rn_source})")
+    print()
+    print(f"  peak signal    = {signal_e:.1f} e-/pixel/frame")
+    print()
+
+    if signal_adu < 5.0:
+        print("  WARNING: peak above baseline is < 5 ADU — the signal may not")
+        print("  be reaching the camera. Open the slit, increase exposure, or")
+        print("  check that the SHG beam is aligned to the spectrometer entrance.")
+        print()
+    if peak_adu > 60000:
+        print("  WARNING: peak ADU is near 16-bit saturation (65535). Reduce")
+        print("  exposure or input power before relying on this number.")
+        print()
+
+    print("-- Recommendation --")
+    result = recommend_amplifier_for_shg(signal_e=signal_e, read_noise_e=rn_e)
+    print(f"  {result.verdict}")
+    print()
+    print(f"  Diagnostic:")
+    print(f"    crossover signal = {result.crossover_signal_e:.1f} e-")
+    print(f"    SNR (conventional) = {result.snr_conv:.2f}")
+    print(f"    SNR (EM, high gain) = {result.snr_em:.2f}")
+    print()
+    if signal_e < 0.3 * result.crossover_signal_e:
+        print("  -> EM mode is clearly better at this signal level.")
+    elif signal_e > 3 * result.crossover_signal_e:
+        print("  -> Conventional is clearly better; EM would add ~41% noise penalty.")
+    else:
+        print("  -> Either mode works; pick by frame rate / dynamic-range needs.")
+
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--gains", default="1,5,10,25,50,100,200",
@@ -238,6 +334,20 @@ def main() -> int:
                              "Set to 0 or higher to skip cooling.")
     parser.add_argument("--cooler-wait", type=float, default=900.0,
                         help="Max seconds to wait for target temperature (default 900)")
+    parser.add_argument("--evaluate-shg", action="store_true",
+                        help="Single-shot mode: take ONE conventional frame, "
+                             "estimate the peak signal in electrons, and "
+                             "recommend EM vs conventional amplifier. Skips "
+                             "the cooling step and the gain sweep — you must "
+                             "have light on the camera (e.g. SHG signal) "
+                             "when running this.")
+    parser.add_argument("--adu-per-e", type=float, default=None,
+                        help="Override the lookup-table e-/ADU conversion "
+                             "factor. Pass your measured PTC K factor for "
+                             "accuracy.")
+    parser.add_argument("--read-noise-e", type=float, default=None,
+                        help="Override the read-noise lookup. Pass your "
+                             "measured noise floor in electrons rms.")
     args = parser.parse_args()
 
     gain_list = [int(g.strip()) for g in args.gains.split(",") if g.strip()]
@@ -249,11 +359,18 @@ def main() -> int:
 
     global _camera_for_cleanup
     print("=" * 70)
-    print("EMCCD health check")
+    if args.evaluate_shg:
+        print("SHG amplifier-mode evaluator")
+    else:
+        print("EMCCD health check")
     print("=" * 70)
     print()
-    print("** Ensure all light is blocked from the camera before continuing **")
-    print("  (close spectrometer slit / put lens cap on / dark room)")
+    if args.evaluate_shg:
+        print("** Put the signal (e.g. SHG) on the camera now **")
+        print("  Adjust slit / power so the spectrum is visible but not saturated.")
+    else:
+        print("** Ensure all light is blocked from the camera before continuing **")
+        print("  (close spectrometer slit / put lens cap on / dark room)")
     print()
     print("Initializing camera...")
     cam = AndorCamera(sdk_path=SDK_PATH)
@@ -263,6 +380,24 @@ def main() -> int:
     print(f"  detector = {cam._info.xpixels} x {cam._info.ypixels}")
     print(f"  temperature = {cam.temperature:.1f} C")
     print()
+
+    # --- SHG amplifier-mode evaluator: shortcut path ---
+    if args.evaluate_shg:
+        try:
+            return _run_shg_evaluator(cam, args)
+        finally:
+            try:
+                cam.abort_acquisition()
+            except Exception:
+                pass
+            print()
+            print("Shutting down camera...")
+            try:
+                cam.shutdown()
+                print("  camera shutdown OK")
+            except Exception as e:
+                print(f"  camera shutdown error: {e}")
+            _camera_for_cleanup = None  # noqa: F841 — module-global, already declared in main scope
 
     # --- Step 1: report EM gain mode and range ---
     print("-- EM gain mode --")
