@@ -37,3 +37,6 @@ config.local.yaml
 
 # Stray Windows device name files
 nul
+
+# Windows folder-customization files (Explorer/OneDrive)
+desktop.ini
