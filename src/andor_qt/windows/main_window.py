@@ -590,6 +590,12 @@ class AndorSpectrometerWindow(QMainWindow):
                 else:
                     calibration = self._hw_manager.get_calibration(hbin=hbin)
 
+                # Apply UI camera settings (amplifier, speeds, gains) so the
+                # hardware matches what gets recorded in the metadata
+                cam_settings = params.get("camera_settings")
+                if cam_settings:
+                    self._hw_manager.camera.apply_camera_settings(cam_settings)
+
                 # Set exposure
                 self._hw_manager.camera.set_exposure(params["exposure_time"])
 

@@ -21,6 +21,15 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+# Procedure attributes forwarded to camera.apply_camera_settings()
+_PROCEDURE_CAMERA_KEYS = (
+    "vs_speed_index",
+    "hs_speed_index",
+    "amplifier_type",
+    "em_gain",
+    "preamp_gain_index",
+)
+
 
 class ExperimentQueueRunner(QObject):
     """Runs queued procedures sequentially in a background thread.
@@ -164,6 +173,15 @@ class ExperimentQueueRunner(QObject):
 
         # Get calibration with binning factor
         calibration = self._hw_manager.get_calibration(hbin=hbin)
+
+        # Apply camera settings carried by the procedure (amplifier, speeds, gains)
+        cam_settings = {
+            key: getattr(procedure, key)
+            for key in _PROCEDURE_CAMERA_KEYS
+            if getattr(procedure, key, None) is not None
+        }
+        if cam_settings:
+            self._hw_manager.camera.apply_camera_settings(cam_settings)
 
         # Set exposure
         self._hw_manager.camera.set_exposure(procedure.exposure_time)
