@@ -428,18 +428,26 @@ class MockAtmcd:
 
         if self._state.read_mode == 0:  # FVB
             eff_x = self._state.xpixels // self._state.hbin
-            if n_frames > 1:
-                # Bulk read: concatenate n_frames spectra
-                spectra = [self._generate_mock_spectrum(eff_x) for _ in range(n_frames)]
-                data = np.concatenate(spectra)
-            else:
-                data = self._generate_mock_spectrum(eff_x)
+            # Bulk read: concatenate n_frames spectra, each in readout order
+            spectra = [self._readout_order(self._generate_mock_spectrum(eff_x))
+                       for _ in range(n_frames)]
+            data = np.concatenate(spectra)
         else:  # Image
             eff_x = self._state.xpixels // self._state.hbin
             eff_y = self._state.ypixels // self._state.vbin
-            data = self._generate_mock_image(eff_x, eff_y).flatten()
+            data = self._readout_order(self._generate_mock_image(eff_x, eff_y)).flatten()
 
         return (DRV_SUCCESS, data.tolist(), first, last)
+
+    def IsReadoutFlippedByAmplifier(self, amplifier: int) -> Tuple[int, int]:
+        """DU970P: the EM register (0) reads right-to-left, conventional (1) left-to-right."""
+        return (DRV_SUCCESS, 1 if amplifier == 0 else 0)
+
+    def _readout_order(self, data: np.ndarray) -> np.ndarray:
+        """Return data as the selected amplifier reads it out (columns mirrored on EM)."""
+        if self.IsReadoutFlippedByAmplifier(self._state.amplifier_type)[1]:
+            return data[..., ::-1]
+        return data
 
     def GetSizeOfCircularBuffer(self) -> Tuple[int, int]:
         """Return maximum circular buffer capacity."""
@@ -454,7 +462,7 @@ class MockAtmcd:
     def GetOldestImage16(self, size: int) -> Tuple[int, List[int]]:
         """Get oldest image from circular buffer as 16-bit."""
         eff_x = self._state.xpixels // self._state.hbin
-        data = self._generate_mock_spectrum(eff_x)
+        data = self._readout_order(self._generate_mock_spectrum(eff_x))
         return (DRV_SUCCESS, data.tolist())
 
     def _generate_mock_spectrum(self, xpixels: int) -> np.ndarray:

@@ -68,11 +68,37 @@ class AndorCamera:
         self._cooler_on = False
         self._current_hbin: int = 1  # tracks last applied hbin for get_spectrum()
         self._em_gain_mode: int = 0  # set by initialize(); 3 = "Real EM Gain"
+        # True when the active output amplifier reads the CCD right-to-left
+        # (EM register on the DU970P); data are then reversed so that pixel 0
+        # is always the short-wavelength end, matching GetCalibration.
+        self._readout_flipped: bool = False
 
     @property
     def info(self) -> Optional[CameraInfo]:
         """Get camera information (available after initialization)."""
         return self._info
+
+    @property
+    def readout_flipped(self) -> bool:
+        """Whether the active amplifier reads right-to-left (data are corrected)."""
+        return self._readout_flipped
+
+    def _refresh_readout_flip(self, amplifier_type: int) -> None:
+        """Query the readout direction of ``amplifier_type`` (caller holds the lock)."""
+        ret, flipped = self._sdk.IsReadoutFlippedByAmplifier(amplifier_type)
+        if ret != self._errors.Error_Codes.DRV_SUCCESS:
+            log.warning(
+                f"IsReadoutFlippedByAmplifier({amplifier_type}) returned {ret}; "
+                "assuming left-to-right readout"
+            )
+            flipped = 0
+        self._readout_flipped = bool(flipped)
+
+    def _to_short_wavelength_first(self, data: np.ndarray) -> np.ndarray:
+        """Reverse the column axis when the active amplifier reads right-to-left."""
+        if self._readout_flipped:
+            return np.ascontiguousarray(data[..., ::-1])
+        return data
 
     @property
     def xpixels(self) -> int:
@@ -194,6 +220,9 @@ class AndorCamera:
                 pixel_height=ysize,
                 em_gain_range=(em_low, em_high),
             )
+
+            # The SDK's default output amplifier after Initialize is 0 (EM)
+            self._refresh_readout_flip(0)
 
             # Set default modes
             self._sdk.SetAcquisitionMode(self._codes.Acquisition_Mode.SINGLE_SCAN)
@@ -326,7 +355,7 @@ class AndorCamera:
             if ret not in self._acq_ok_codes:
                 raise RuntimeError(f"GetImages16 failed with code: {ret}")
 
-        data = np.array(arr, dtype=np.float64)
+        data = self._to_short_wavelength_first(np.array(arr, dtype=np.float64))
         log.debug(f"FVB acquisition complete: {len(data)} pixels (hbin={hbin})")
         return data
 
@@ -412,7 +441,9 @@ class AndorCamera:
             if ret not in self._acq_ok_codes:
                 raise RuntimeError(f"GetImages16 failed with code: {ret}")
 
-        data = np.array(arr, dtype=np.float64).reshape(eff_y, eff_x)
+        data = self._to_short_wavelength_first(
+            np.array(arr, dtype=np.float64).reshape(eff_y, eff_x)
+        )
         log.debug(f"Image acquisition complete: {eff_y}x{eff_x}")
         return data
 
@@ -562,7 +593,9 @@ class AndorCamera:
         arr_np = np.array(arr, dtype=np.float64)
         # SDK may return more data than n_valid frames — slice to valid range
         valid_pixels = n_valid * eff_pixels
-        frames = arr_np[:valid_pixels].reshape(n_valid, eff_pixels)
+        frames = self._to_short_wavelength_first(
+            arr_np[:valid_pixels].reshape(n_valid, eff_pixels)
+        )
         return frames, n_valid
 
     def _ensure_idle(self) -> None:
@@ -686,6 +719,7 @@ class AndorCamera:
 
         with self._lock:
             self._sdk.SetOutputAmplifier(amplifier_type)
+            self._refresh_readout_flip(amplifier_type)
             log.debug(f"Amplifier set to type {amplifier_type}")
 
     def set_em_gain(self, gain: int) -> None:
@@ -821,6 +855,7 @@ class AndorCamera:
                 self._sdk.SetVSSpeed(settings["vs_speed_index"])
             if "amplifier_type" in settings:
                 self._sdk.SetOutputAmplifier(amplifier_type)
+                self._refresh_readout_flip(amplifier_type)
             if "hs_speed_index" in settings:
                 self._sdk.SetHSSpeed(amplifier_type, settings["hs_speed_index"])
             if "em_gain" in settings and amplifier_type == 0:
