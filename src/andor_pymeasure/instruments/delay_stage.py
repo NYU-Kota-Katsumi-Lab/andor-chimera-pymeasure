@@ -123,6 +123,8 @@ class MockDelayStage(DelayStage):
     position limits and movement time.
     """
 
+    _MOVE_POLL_S = 0.005  # how often a simulated move checks for stop()
+
     def __init__(
         self,
         position_min: float = 0.0,
@@ -162,17 +164,27 @@ class MockDelayStage(DelayStage):
         with self._lock:
             self._target = value
             self._moving = True
+            start = self._position
 
-        # Simulate movement time
-        distance = abs(value - self._position)
+        # Simulate movement time in short steps so stop() can interrupt the move
+        distance = abs(value - start)
         move_time = distance / self._velocity
 
         log.debug(f"Moving to {value}mm (distance: {distance:.2f}mm, time: {move_time:.2f}s)")
-        time.sleep(move_time)
-
-        with self._lock:
-            self._position = value
-            self._moving = False
+        t0 = time.monotonic()
+        while True:
+            elapsed = time.monotonic() - t0
+            with self._lock:
+                if not self._moving:  # stop() called: halt where the stage is now
+                    frac = min(elapsed / move_time, 1.0) if move_time > 0 else 1.0
+                    self._position = start + (value - start) * frac
+                    log.debug(f"Move stopped: position = {self._position}mm")
+                    return
+                if elapsed >= move_time:
+                    self._position = value
+                    self._moving = False
+                    break
+            time.sleep(min(self._MOVE_POLL_S, move_time - elapsed))
 
         log.debug(f"Move complete: position = {self._position}mm")
 

@@ -171,7 +171,11 @@ class TestMockDelayStageMotion:
         # Moving flag should be cleared
         assert not initialized_delay_stage._moving
 
+        # The move itself must end promptly (a lingering non-daemon thread
+        # blocks interpreter exit after the test session)
         thread.join(timeout=1.0)
+        assert not thread.is_alive(), "stop() did not interrupt the move"
+        assert initialized_delay_stage.position_mm < 100.0
 
     def test_is_moving_during_motion(self, mock_delay_stage):
         """is_moving returns True during motion."""
