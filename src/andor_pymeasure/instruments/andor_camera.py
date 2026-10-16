@@ -68,6 +68,10 @@ class AndorCamera:
         camera.shutdown()
     """
 
+    # With an external trigger, how long (beyond the exposure) a single
+    # acquisition waits for a trigger before giving up
+    EXTERNAL_TRIGGER_TIMEOUT_S = 5.0
+
     def __init__(self, sdk_path: str = r"C:\Program Files\Andor SDK"):
         """Initialize the camera wrapper.
 
@@ -89,6 +93,8 @@ class AndorCamera:
         # is always the short-wavelength end, matching GetCalibration.
         self._readout_flipped: bool = False
         self._amplifier_type: int = 0  # SDK default after Initialize is 0 (EM)
+        self._trigger_mode: str = "internal"  # set to INTERNAL by initialize()
+        self._exposure_time: float = 0.0
 
     @property
     def info(self) -> Optional[CameraInfo]:
@@ -119,6 +125,26 @@ class AndorCamera:
             )
             flipped = 0
         self._readout_flipped = bool(flipped)
+
+    def _wait_for_acquisition(self) -> int:
+        """Wait for a single-scan frame; with an external trigger, give up after a timeout.
+
+        Raises:
+            TimeoutError: If no external trigger arrives (the acquisition is aborted).
+        """
+        if self._trigger_mode == "internal":
+            return self._sdk.WaitForAcquisition()
+        timeout_s = self.EXTERNAL_TRIGGER_TIMEOUT_S + self._exposure_time
+        ret = self._sdk.WaitForAcquisitionTimeOut(int(timeout_s * 1000))
+        if ret == self._errors.Error_Codes.DRV_NO_NEW_DATA:
+            with self._lock:
+                self._sdk.AbortAcquisition()
+            raise TimeoutError(
+                f"No external trigger received within {timeout_s:.1f} s "
+                f"(trigger mode '{self._trigger_mode}'). Check the trigger source "
+                "or select Internal trigger."
+            )
+        return ret
 
     def _to_short_wavelength_first(self, data: np.ndarray) -> np.ndarray:
         """Reverse the column axis when the active amplifier reads right-to-left."""
@@ -276,6 +302,7 @@ class AndorCamera:
 
         with self._lock:
             self._sdk.SetExposureTime(exposure_time)
+            self._exposure_time = float(exposure_time)
             log.debug(f"Exposure time set to {exposure_time}s")
 
     def cooler_on(self, target: int = -60) -> None:
@@ -367,7 +394,7 @@ class AndorCamera:
                 raise RuntimeError(f"StartAcquisition failed with code: {ret}")
 
         # Wait for acquisition (outside lock so abort can work)
-        ret = self._sdk.WaitForAcquisition()
+        ret = self._wait_for_acquisition()
         if ret not in self._acq_ok_codes:
             with self._lock:
                 self._sdk.AbortAcquisition()
@@ -455,7 +482,7 @@ class AndorCamera:
                 raise RuntimeError(f"StartAcquisition failed with code: {ret}")
 
         # Wait for acquisition
-        ret = self._sdk.WaitForAcquisition()
+        ret = self._wait_for_acquisition()
         if ret not in self._acq_ok_codes:
             with self._lock:
                 self._sdk.AbortAcquisition()
@@ -934,10 +961,12 @@ class AndorCamera:
                 else:  # internal
                     self._sdk.SetTriggerMode(0)
                     self._sdk.SetFastExtTrigger(0)
+                self._trigger_mode = trig if trig in ("external", "fast_external") else "internal"
                 log.debug(f"Trigger mode: {trig}")
 
             if "exposure_time" in settings:
                 self._sdk.SetExposureTime(settings["exposure_time"])
+                self._exposure_time = float(settings["exposure_time"])
                 log.debug(f"Exposure time: {settings['exposure_time']} s")
 
             if "baseline_clamp" in settings:

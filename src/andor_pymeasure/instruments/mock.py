@@ -22,6 +22,7 @@ DRV_TEMPERATURE_NOT_STABILIZED = 20035
 DRV_TEMPERATURE_OFF = 20034
 DRV_TEMPERATURE_DRIFT = 20038
 DRV_ACQUIRING = 20072
+DRV_NO_NEW_DATA = 20024
 
 ATSPECTROGRAPH_SUCCESS = 0
 
@@ -63,6 +64,7 @@ class MockCameraState:
     crop_width: int = 1024
     trigger_mode: int = 0       # 0=internal, 1=external
     fast_ext_trigger: int = 0  # 0=disabled, 1=enabled (SetFastExtTrigger)
+    external_trigger_present: bool = True  # False simulates no trigger source
     keep_cleans: int = 1       # 0=disabled, 1=enabled (EnableKeepCleans)
 
 
@@ -95,6 +97,7 @@ class MockAtmcdErrors:
         DRV_TEMPERATURE_OFF = DRV_TEMPERATURE_OFF
         DRV_TEMPERATURE_DRIFT = DRV_TEMPERATURE_DRIFT
         DRV_ACQUIRING = DRV_ACQUIRING
+        DRV_NO_NEW_DATA = DRV_NO_NEW_DATA
 
 
 class MockAtmcdCodes:
@@ -419,6 +422,13 @@ class MockAtmcd:
         time.sleep(min(self._state.exposure_time, 0.010))
         self._state.acquiring = False
         return DRV_SUCCESS
+
+    def WaitForAcquisitionTimeOut(self, timeout_ms: int) -> int:
+        """Wait for acquisition; DRV_NO_NEW_DATA if an external trigger never arrives."""
+        if self._state.trigger_mode != 0 and not self._state.external_trigger_present:
+            time.sleep(min(timeout_ms / 1000.0, 0.010))  # keep tests fast
+            return DRV_NO_NEW_DATA
+        return self.WaitForAcquisition()
 
     def GetImages16(
         self, first: int, last: int, size: int
