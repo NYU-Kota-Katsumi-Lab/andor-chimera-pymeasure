@@ -77,7 +77,7 @@ class SpectrumProcedure(SharedHardwareMixin, Procedure):
     )
     amplifier_type = IntegerParameter(
         "Amplifier Type",
-        default=0,
+        default=1,  # Conventional, matching the UI default
         minimum=0,
         maximum=1,
     )
@@ -236,7 +236,7 @@ class ImageProcedure(SharedHardwareMixin, Procedure):
     )
     amplifier_type = IntegerParameter(
         "Amplifier Type",
-        default=0,
+        default=1,  # Conventional, matching the UI default
         minimum=0,
         maximum=1,
     )
