@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from andor_pymeasure.instruments.andor_camera import camera_readout_metadata
 from andor_qt.core.experiment_queue import ExperimentQueueRunner
 from andor_qt.core.hardware_manager import HardwareManager
 from andor_qt.core.sequencer_adapter import SequencerAdapter
@@ -616,6 +617,7 @@ class AndorSpectrometerWindow(QMainWindow):
                     else:
                         data = self._hw_manager.camera.acquire_fvb(hbin=hbin)
 
+                    params.update(camera_readout_metadata(self._hw_manager.camera))
                     # Emit spectrum ready (on main thread)
                     self._acq_signals.spectrum_ready.emit(calibration, data, params)
                 else:
@@ -625,6 +627,7 @@ class AndorSpectrometerWindow(QMainWindow):
                         vbin=params["vbin"],
                     )
 
+                    params.update(camera_readout_metadata(self._hw_manager.camera))
                     # Emit image ready (on main thread)
                     self._acq_signals.image_ready.emit(data, calibration, params)
 

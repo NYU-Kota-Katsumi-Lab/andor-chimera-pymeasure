@@ -19,6 +19,7 @@ import numpy as np
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QScrollArea, QSplitter, QVBoxLayout, QWidget
 
+from andor_pymeasure.instruments.andor_camera import camera_readout_metadata
 from andor_qt.ta.engine import TransientAbsorptionEngine
 from andor_qt.ta.hdf5_writer import TADataWriter, auto_filename
 from andor_qt.ta.monitor_engine import TAMonitorEngine
@@ -394,6 +395,8 @@ class TAWindowPanel(QWidget):
                 camera_settings=buf["camera_settings"],
                 hardware_info=hardware_info,
             ) as writer:
+                if buf.get("readout"):
+                    writer.update_metadata(buf["readout"])
                 writer.begin_scan(0)
                 # Pump/ref may be shorter than delays if some points failed; pad with None
                 n = len(buf["delays_ps"])
@@ -551,6 +554,11 @@ class TAWindowPanel(QWidget):
     def _finalize_writer(self) -> None:
         if self._writer is not None:
             try:
+                # Camera settings are applied by the engine after the file is
+                # opened, so the readout actually used is recorded at the end
+                readout = camera_readout_metadata(getattr(self._hw_manager, "camera", None))
+                if readout:
+                    self._writer.update_metadata(readout)
                 self._writer.finalize()
             except Exception as exc:
                 log.warning(f"Error finalizing HDF5 writer: {exc}")
@@ -558,6 +566,10 @@ class TAWindowPanel(QWidget):
 
     def _end_scan(self) -> None:
         """Common cleanup after any scan termination."""
+        # Keep the readout used for this scan for "Save Last Scan"
+        self._last_scan_buffer["readout"] = camera_readout_metadata(
+            getattr(self._hw_manager, "camera", None)
+        )
         self._finalize_writer()
         self._config_widget.set_scan_running(False)
         self._trigger_test_btn.setEnabled(True)

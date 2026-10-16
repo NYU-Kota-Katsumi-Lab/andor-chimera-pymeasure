@@ -59,6 +59,26 @@ class TestReadoutFlippedTracking:
         assert cam.readout_flipped is False
 
 
+class TestReadoutMetadata:
+    def test_after_initialize_reports_em_corrected(self, cam):
+        assert cam.readout_metadata() == {
+            "amplifier_type_applied": 0,
+            "readout_flip_corrected": 1,
+            "readout_orientation": "short_wavelength_first",
+        }
+
+    def test_after_conventional_reports_uncorrected(self, cam):
+        cam.apply_camera_settings({"amplifier_type": 1})
+        meta = cam.readout_metadata()
+        assert meta["amplifier_type_applied"] == 1
+        assert meta["readout_flip_corrected"] == 0
+
+    def test_settings_without_amplifier_keep_previous(self, cam):
+        cam.set_amplifier(1)
+        cam.apply_camera_settings({"hbin": 2})
+        assert cam.readout_metadata()["amplifier_type_applied"] == 1
+
+
 class TestAcquireFvbOrientation:
     def test_flipped_amplifier_reverses_spectrum(self, cam):
         cam.set_amplifier(0)

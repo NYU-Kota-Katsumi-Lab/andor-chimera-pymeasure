@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Deque, Optional, Tuple
 import numpy as np
 from PySide6.QtCore import QObject, Signal
 
+from andor_pymeasure.instruments.andor_camera import camera_readout_metadata
+
 if TYPE_CHECKING:
     from pymeasure.experiment import Procedure
 
@@ -216,6 +218,7 @@ class ExperimentQueueRunner(QObject):
             "delay_position": getattr(procedure, "delay_position", 0),
             "num_accumulations": num_accum,
             "hbin": hbin,
+            **camera_readout_metadata(self._hw_manager.camera),
         }
         self.spectrum_ready.emit(calibration, data, params)
 
@@ -234,5 +237,6 @@ class ExperimentQueueRunner(QObject):
             "delay_position": getattr(procedure, "delay_position", 0),
             "hbin": hbin,
             "vbin": vbin,
+            **camera_readout_metadata(self._hw_manager.camera),
         }
         self.image_ready.emit(data, calibration, params)

@@ -483,3 +483,26 @@ class TestAcquisitionMetadata:
             # Keys not in the dict should be absent
             assert "hbin" not in meta.attrs
             assert "vs_speed_index" not in meta.attrs
+
+
+class TestUpdateMetadata:
+    def test_update_metadata_writes_attrs(self, tmp_path):
+        path = tmp_path / "meta.h5"
+        writer = TADataWriter(path, wavelengths=np.array([500.0, 600.0]))
+        writer.open()
+        writer.update_metadata({
+            "amplifier_type_applied": 1,
+            "readout_flip_corrected": 0,
+            "readout_orientation": "short_wavelength_first",
+        })
+        writer.finalize()
+
+        with h5py.File(path, "r") as f:
+            meta = f["metadata"].attrs
+            assert meta["amplifier_type_applied"] == 1
+            assert meta["readout_flip_corrected"] == 0
+            assert meta["readout_orientation"] == "short_wavelength_first"
+
+    def test_update_metadata_before_open_is_noop(self, tmp_path):
+        writer = TADataWriter(tmp_path / "x.h5", wavelengths=np.array([500.0]))
+        writer.update_metadata({"amplifier_type_applied": 1})  # must not raise

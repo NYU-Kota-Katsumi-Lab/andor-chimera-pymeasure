@@ -15,12 +15,28 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
 log = logging.getLogger(__name__)
 log.addHandler(logging.NullHandler())
+
+
+def camera_readout_metadata(camera) -> Dict[str, object]:
+    """Applied readout state of ``camera`` for saving with data, or {} if unavailable.
+
+    Tolerates cameras (or test doubles) without a real ``readout_metadata()``.
+    """
+    get_meta = getattr(camera, "readout_metadata", None)
+    if not callable(get_meta):
+        return {}
+    try:
+        meta = get_meta()
+    except Exception as exc:
+        log.warning(f"Could not read camera readout metadata: {exc}")
+        return {}
+    return dict(meta) if isinstance(meta, dict) else {}
 
 
 @dataclass(frozen=True)
@@ -72,6 +88,7 @@ class AndorCamera:
         # (EM register on the DU970P); data are then reversed so that pixel 0
         # is always the short-wavelength end, matching GetCalibration.
         self._readout_flipped: bool = False
+        self._amplifier_type: int = 0  # SDK default after Initialize is 0 (EM)
 
     @property
     def info(self) -> Optional[CameraInfo]:
@@ -83,8 +100,17 @@ class AndorCamera:
         """Whether the active amplifier reads right-to-left (data are corrected)."""
         return self._readout_flipped
 
+    def readout_metadata(self) -> Dict[str, object]:
+        """Readout state actually applied to the camera, for saving with data."""
+        return {
+            "amplifier_type_applied": int(self._amplifier_type),
+            "readout_flip_corrected": int(self._readout_flipped),
+            "readout_orientation": "short_wavelength_first",
+        }
+
     def _refresh_readout_flip(self, amplifier_type: int) -> None:
-        """Query the readout direction of ``amplifier_type`` (caller holds the lock)."""
+        """Record ``amplifier_type`` and query its readout direction (caller holds the lock)."""
+        self._amplifier_type = int(amplifier_type)
         ret, flipped = self._sdk.IsReadoutFlippedByAmplifier(amplifier_type)
         if ret != self._errors.Error_Codes.DRV_SUCCESS:
             log.warning(

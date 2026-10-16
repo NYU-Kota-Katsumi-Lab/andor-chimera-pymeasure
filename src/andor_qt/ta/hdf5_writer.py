@@ -239,6 +239,15 @@ class TADataWriter:
 
         self._file.flush()
 
+    def update_metadata(self, attrs: Dict[str, object]) -> None:
+        """Write extra attributes to ``/metadata`` (no-op if the file is not open)."""
+        if self._file is None:
+            return
+        meta = self._file["metadata"]
+        for key, val in attrs.items():
+            meta.attrs[key] = val
+        self._file.flush()
+
     def finalize(self) -> None:
         """Close the HDF5 file."""
         if self._file is not None:
