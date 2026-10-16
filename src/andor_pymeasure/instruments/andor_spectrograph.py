@@ -331,6 +331,32 @@ class AndorSpectrograph:
         log.debug(f"Calibration: {calibration[0]:.2f}nm - {calibration[-1]:.2f}nm")
         return calibration
 
+    def get_binned_calibration(
+        self, xpixels: int, pixel_width: float = 16.0, hbin: int = 1
+    ) -> np.ndarray:
+        """Get the wavelength at the centre of each horizontally binned pixel.
+
+        Do not ask GetCalibration for ``xpixels // hbin`` pixels of width
+        ``pixel_width * hbin``: the SDK then labels bin k with unbinned pixel
+        ``hbin*k + hbin - 1``, (hbin - 1)/2 px to the red of the bin centre
+        (measured with argon on the KY193i, 2026-10-15). Instead the unbinned
+        axis is averaged over each bin.
+
+        Args:
+            xpixels: Unbinned number of detector pixels.
+            pixel_width: Unbinned pixel width in micrometers.
+            hbin: Horizontal binning factor (must divide ``xpixels``).
+
+        Returns:
+            1D numpy array of ``xpixels // hbin`` wavelengths in nm.
+        """
+        if hbin < 1 or xpixels % hbin != 0:
+            raise ValueError(f"hbin={hbin} must be a positive factor of {xpixels}")
+        wavelengths = self.get_calibration(xpixels, pixel_width)
+        if hbin == 1:
+            return wavelengths
+        return wavelengths.reshape(-1, hbin).mean(axis=1)
+
     def shutdown(self) -> None:
         """Shutdown spectrograph SDK."""
         if not self._initialized:

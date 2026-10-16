@@ -255,9 +255,8 @@ class ImageProcedure(Procedure):
         # Get wavelength calibration
         eff_xpixels = self.camera.xpixels // self.hbin
         log.info("Getting wavelength calibration...")
-        wavelengths = self.spectrograph.get_calibration(
-            eff_xpixels,
-            self.camera.info.pixel_width * self.hbin,  # Effective pixel width with binning
+        wavelengths = self.spectrograph.get_binned_calibration(
+            self.camera.xpixels, self.camera.info.pixel_width, self.hbin
         )
         log.info(f"Wavelength range: {wavelengths[0]:.2f} - {wavelengths[-1]:.2f} nm")
 

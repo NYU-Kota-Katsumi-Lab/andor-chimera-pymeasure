@@ -584,12 +584,10 @@ class HardwareManager:
             return None
 
         try:
-            eff_xpixels = self._camera.xpixels // hbin
-            eff_pixel_width = (self._camera.info.pixel_width if self._camera.info else 26.0) * hbin
+            pixel_width = self._camera.info.pixel_width if self._camera.info else 26.0
             with self._hardware_lock:
-                calibration = self._spectrograph.get_calibration(
-                    eff_xpixels,
-                    eff_pixel_width,
+                calibration = self._spectrograph.get_binned_calibration(
+                    self._camera.xpixels, pixel_width, hbin
                 )
             self._signals.calibration_updated.emit(calibration)
             return calibration

@@ -361,10 +361,8 @@ class PumpProbeImageProcedure(Procedure):
             return
 
         # Get wavelength calibration (accounting for binning)
-        eff_xpixels = self.camera.xpixels // self.hbin
-        wavelengths = self.spectrograph.get_calibration(
-            eff_xpixels,
-            self.camera.info.pixel_width * self.hbin,
+        wavelengths = self.spectrograph.get_binned_calibration(
+            self.camera.xpixels, self.camera.info.pixel_width, self.hbin
         )
 
         # Generate delay positions

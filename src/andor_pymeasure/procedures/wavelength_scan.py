@@ -295,7 +295,6 @@ class WavelengthImageScanProcedure(Procedure):
         log.info(f"Scanning {num_positions} positions with 2D images")
 
         # Calculate effective dimensions
-        eff_xpixels = self.camera.xpixels // self.hbin
         self.camera.ypixels // self.vbin
 
         # Set exposure
@@ -313,9 +312,8 @@ class WavelengthImageScanProcedure(Procedure):
             self.spectrograph.wavelength = center_wl
 
             # Get calibration
-            pixel_wavelengths = self.spectrograph.get_calibration(
-                eff_xpixels,
-                self.camera.info.pixel_width * self.hbin,
+            pixel_wavelengths = self.spectrograph.get_binned_calibration(
+                self.camera.xpixels, self.camera.info.pixel_width, self.hbin
             )
 
             # Acquire image
